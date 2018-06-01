@@ -1,6 +1,6 @@
 # Watson Assistant with Paypal Payment API integration
 
-### To run the application locally
+### Steps to run the application locally
 
 1. Update Watson Assistant Username, Password and Workspace ID in .env file
 
@@ -11,7 +11,7 @@
 4. Run the application from browser: **localhost: 3000**
 
 
-### Push the application to IBM Cloud
+### Steps to push the application to IBM Cloud
 
 1. Update Watson Assistant Username, Password and Workspace ID in .env file
 
