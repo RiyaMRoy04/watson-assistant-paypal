@@ -1,0 +1,11 @@
+---
+applications:
+- name: watson-paypal-demo
+  command: npm start
+  path: .
+  memory: 256M
+  instances: 1
+  services:
+  - watson-assistant-paypal
+  env:
+    NPM_CONFIG_PRODUCTION: false
