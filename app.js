@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+'use strict';
+
 var path = require('path');
 var express = require('express'); // app server
 var bodyParser = require('body-parser'); // parser for post requests
@@ -25,6 +27,7 @@ var paypal = require('paypal-rest-sdk');
 app.use(express.static(path.join(__dirname, 'public'))); // load UI from public folder
 app.use(bodyParser.json());
 
+var conversations = [];
 // Create the service wrapper
 
 var assistant = new watson.AssistantV1({
@@ -78,6 +81,7 @@ function updateMessage(input, response, callback) {
   if (response.intents && response.intents[0] && response.intents[0].intent === 'yes') {
     paymentURL(input.context.pprice, function(id, url) {
       console.log(url, 'URL');
+      conversations[id] = input;
       responseText = '<a target="_blank" href="'+ url + '">Pay Here</a>';
       response.output.text = responseText;
       callback(response);
@@ -145,15 +149,24 @@ app.get('/process', function (req, res) {
     if (error) {
       console.error(JSON.stringify(error));
     } else {
+      var payload = conversations[req.query.token];
+      payload.context.paymentStatus = 'cancelled';
       if (payment.state == 'approved') {
         res.sendFile('success.html', {
           root: path.join(__dirname, 'public')
         });
+        payload.context.paymentStatus = 'completed';
       } else {
         res.sendFile('cancel.html', {
           root: path.join(__dirname, 'public')
         });
       }
+      assistant.message(payload, function (err, data) {
+        if (err) {
+          console.dir(err);
+        }
+        console.log(data);
+      });
     }
   });
 });
@@ -163,4 +176,12 @@ app.get('/cancel', function (req, res) {
     root: path.join(__dirname, 'public')
   });
   console.log(req.query.token, 'Cancel');
+  var payload = conversations[req.query.token];
+  payload.context.paymentStatus = 'cancelled';
+  assistant.message(payload, function (err, data) {
+    if (err) {
+      console.dir(err);
+    }
+    console.log(data);
+  });
 });
