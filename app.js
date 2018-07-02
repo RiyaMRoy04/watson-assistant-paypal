@@ -14,16 +14,15 @@
  * limitations under the License.
  */
 
-'use strict';
-
+var path = require('path');
 var express = require('express'); // app server
 var bodyParser = require('body-parser'); // parser for post requests
 var watson = require('watson-developer-cloud'); // watson sdk
-var request = require('request');
 var app = express();
+var paypal = require('paypal-rest-sdk');
 
 // Bootstrap application settings
-app.use(express.static('./public')); // load UI from public folder
+app.use(express.static(path.join(__dirname, 'public'))); // load UI from public folder
 app.use(bodyParser.json());
 
 // Create the service wrapper
@@ -34,6 +33,12 @@ var assistant = new watson.AssistantV1({
   username: process.env.ASSISTANT_USERNAME || '<username>',
   password: process.env.ASSISTANT_PASSWORD || '<password>',
   version: '2018-02-16'
+});
+
+paypal.configure({
+  mode: 'sandbox', //sandbox or live
+  client_id: process.env.PAYPAL_CLIENT_ID,
+  client_secret: process.env.PAYPAL_CLIENT_SECRET
 });
 
 // Endpoint to be call from the client side
@@ -51,13 +56,14 @@ app.post('/api/message', function(req, res) {
     context: req.body.context || {},
     input: req.body.input || {}
   };
-
   // Send the input to the assistant service
   assistant.message(payload, function(err, data) {
     if (err) {
       return res.status(err.code || 500).json(err);
     }
-    return res.json(updateMessage(payload, data));
+    updateMessage(payload, data, function (response) {
+      return res.json(response);
+    });
   });
 });
 
@@ -67,48 +73,94 @@ app.post('/api/message', function(req, res) {
  * @param  {Object} response The response from the Assistant service
  * @return {Object}          The response with the updated message
  */
-function updateMessage(input, response) {
-  var responseText = null;
-  if (!response.output) {
-    response.output = {};
+function updateMessage(input, response, callback) {
+  var responseText = '';
+  if (response.intents && response.intents[0] && response.intents[0].intent === 'yes') {
+    paymentURL(input.context.pprice, function(id, url) {
+      console.log(url, 'URL');
+      responseText = '<a target="_blank" href="'+ url + '">Pay Here</a>';
+      response.output.text = responseText;
+      callback(response);
+    });
   } else {
-    return response;
+    callback(response);
   }
-  if (response.intents && response.intents[0]) {
-    var intent = response.intents[0];
-    // Depending on the confidence of the response the app can return different messages.
-    // The confidence will vary depending on how well the system is trained. The service will always try to assign
-    // a class/intent to the input. If the confidence is low, then it suggests the service is unsure of the
-    // user's intent . In these cases it is usually best to return a disambiguation message
-    // ('I did not understand your intent, please rephrase your question', etc..)
-    if (intent.confidence >= 0.75) {
-      responseText = 'I understood your intent was ' + intent.intent;
-    } else if (intent.confidence >= 0.5) {
-      responseText = 'I think your intent was ' + intent.intent;
-    } else {
-      responseText = 'I did not understand your intent';
-    }
-  }
-    if(response.intents=="weather")
-        {
-            location = response.entities.value;
-            var url = 'https://query.yahooapis.com/v1/public/yql?q=select item.condition from weather.forecast where woeid in (select woeid from geo.places(1) where text="' + location + '") and u="c"&format=json';
-            request.get(url, function(error, response, body) {
-           if (error) {
-               reject(error);
-           }
-           else {
-               var condition = JSON.parse(body).query.results.channel.item.condition;
-               var text = condition.text;
-               var temperature = condition.temp;
-               var output = 'It is ' + temperature + ' degrees in ' + location + ' and ' + text;
-               responseText = output;
-               console.log(responseText);
-           }
-       });
-        }
-  response.output.text = responseText;
-  return response;
 }
 
-module.exports = app;
+function paymentURL(amount, callback) {
+  var payReq = JSON.stringify({
+    intent: 'sale',
+    redirect_urls: {
+      return_url: process.env.PAYPAL_REDIRECT + '/process',
+      cancel_url: process.env.PAYPAL_REDIRECT + '/cancel'
+    },
+    payer: {
+      payment_method: 'paypal'
+    },
+    transactions: [{
+      description: 'This is the payment transaction description.',
+      amount: {
+        total: amount,
+        currency: 'INR'
+      }
+    }]
+  });
+
+  paypal.payment.create(payReq, function (error, payment) {
+    if (error) {
+      console.dir(error.response);
+      console.dir(error.response.details);
+    } else {
+      // Capture HATEOAS links
+      var links = {};
+      payment.links.forEach(function (linkObj) {
+        links[linkObj.rel] = {
+          href: linkObj.href,
+          method: linkObj.method
+        };
+      });
+      // If redirect url present, insert link into bot message and display
+
+      if (links.hasOwnProperty('approval_url')) {
+        var split = links['approval_url'].href.split('=');
+        console.log(split, 'split');
+        console.log(split[split.length - 1], 'Token');
+        callback(split[split.length - 1], links['approval_url'].href);
+      } else {
+        console.error('no redirect URI present');
+      }
+    }
+  });
+}
+
+app.get('/process', function (req, res) {
+  // Extract payment confirmation information needed to process payment
+  var paymentId = req.query.paymentId;
+  var payerId = {
+    payer_id: req.query.PayerID
+  };
+
+  // Attempt to complete the payment for the person
+  paypal.payment.execute(paymentId, payerId, function (error, payment) {
+    if (error) {
+      console.error(JSON.stringify(error));
+    } else {
+      if (payment.state == 'approved') {
+        res.sendFile('success.html', {
+          root: path.join(__dirname, 'public')
+        });
+      } else {
+        res.sendFile('cancel.html', {
+          root: path.join(__dirname, 'public')
+        });
+      }
+    }
+  });
+});
+
+app.get('/cancel', function (req, res) {
+  res.sendFile('cancel.html', {
+    root: path.join(__dirname, 'public')
+  });
+  console.log(req.query.token, 'Cancel');
+});
