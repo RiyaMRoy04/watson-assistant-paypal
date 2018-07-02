@@ -15,6 +15,9 @@
  */
 
 'use strict';
+require('dotenv').config({
+  silent: true
+});
 
 var path = require('path');
 var express = require('express'); // app server
@@ -22,6 +25,9 @@ var bodyParser = require('body-parser'); // parser for post requests
 var watson = require('watson-developer-cloud'); // watson sdk
 var app = express();
 var paypal = require('paypal-rest-sdk');
+var port = process.env.PORT || process.env.VCAP_APP_PORT || 3000;
+var io = require('socket.io');
+var socket;
 
 // Bootstrap application settings
 app.use(express.static(path.join(__dirname, 'public'))); // load UI from public folder
@@ -165,7 +171,7 @@ app.get('/process', function (req, res) {
         if (err) {
           console.dir(err);
         }
-        console.log(data);
+        socket.emit('message', data);
       });
     }
   });
@@ -182,6 +188,18 @@ app.get('/cancel', function (req, res) {
     if (err) {
       console.dir(err);
     }
-    console.log(data);
+    socket.emit('message', data);
   });
+});
+
+app.listen(port, function () {
+  socket = io(this);
+  socket.on('connection', function (client) {
+    console.log('There is someone joining us.');
+
+    client.on('disconnect', function () {
+      console.log('Sad! Someone just left.');
+    });
+  });
+  console.log('Server running on port: %d', port);
 });
